@@ -4,6 +4,10 @@ export interface ProcessInfo {
   pm_cwd: string;
   repo?: string;
   branch?: string;
+  status?: string;
+  memory?: number;
+  cpu?: number;
+  uptime?: number;
 }
 
 export interface ErrorContext {

@@ -205,7 +205,7 @@ export class ProcessMonitor {
     return Buffer.from(normalized).toString('base64').substring(0, 50);
   }
   
-  private async getProcessList(): Promise<ProcessInfo[]> {
+  public async getProcessList(): Promise<ProcessInfo[]> {
     return new Promise((resolve, reject) => {
       pm2.list((err, list) => {
         if (err) {
@@ -217,7 +217,11 @@ export class ProcessMonitor {
           return {
             id: proc.pm_id!,
             name: proc.name!,
-            pm_cwd: proc.pm2_env?.pm_cwd || proc.pm_cwd || ''
+            pm_cwd: proc.pm2_env?.pm_cwd || proc.pm_cwd || '',
+            status: proc.pm2_env?.status || 'unknown',
+            memory: proc.monit?.memory || 0,
+            cpu: proc.monit?.cpu || 0,
+            uptime: proc.pm2_env?.pm_uptime ? Date.now() - proc.pm2_env.pm_uptime : 0
           };
         });
         

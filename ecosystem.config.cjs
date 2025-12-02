@@ -10,7 +10,8 @@ module.exports = {
       max_restarts: 10,
       min_uptime: '10s',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        PORT: '3333'
       },
       error_file: './logs/watchtower-error.log',
       out_file: './logs/watchtower-out.log',

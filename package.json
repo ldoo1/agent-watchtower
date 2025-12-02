@@ -10,7 +10,12 @@
     "dev": "tsx src/index.ts",
     "watch": "tsx watch src/index.ts"
   },
-  "keywords": ["pm2", "monitoring", "slack", "error-tracking"],
+  "keywords": [
+    "pm2",
+    "monitoring",
+    "slack",
+    "error-tracking"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/ldoo1/agent-watchtower.git"
@@ -18,11 +23,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "pm2": "^5.3.0",
     "axios": "^1.6.0",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "express": "^5.2.1",
+    "pm2": "^5.3.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"

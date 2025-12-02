@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import { ProcessMonitor } from './services/monitor.js';
+import { SlackServer } from './services/server.js';
 import { log, logError } from './utils/logger.js';
 
 const monitor = new ProcessMonitor();
+const slackServer = new SlackServer(monitor, parseInt(process.env.PORT || '3333', 10));
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
@@ -22,5 +24,8 @@ monitor.start().catch((error) => {
   logError(error, 'Failed to start monitor');
   process.exit(1);
 });
+
+// Start Slack server
+slackServer.start();
 
 log('Agent Watchtower starting...');
