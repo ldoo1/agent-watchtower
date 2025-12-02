@@ -71,7 +71,8 @@ export class ProcessMonitor {
       // Listen for process restarts/crashes
       bus.on('process:event', (data: any) => {
         if (data.event === 'restart' || data.event === 'exit') {
-          log(`Process ${data.name} ${data.event}ed`);
+          const name = data.process?.name || data.name || 'unknown';
+          log(`Process ${name} ${data.event}ed`);
         }
       });
       
@@ -95,6 +96,25 @@ export class ProcessMonitor {
     // Maintain buffer size
     if (buffer.length > BUFFER_SIZE) {
       buffer.shift();
+    }
+
+    // Check stdout for critical error patterns
+    if (type === 'stdout') {
+      const CRITICAL_PATTERNS = [
+        '[404 Not Found]',
+        'Error:',
+        'Exception:',
+        'FATAL',
+        '[ERROR]'
+      ];
+
+      const hasError = CRITICAL_PATTERNS.some(pattern => 
+        logData.includes(pattern)
+      );
+
+      if (hasError) {
+        this.handleError(data);
+      }
     }
   }
   
@@ -193,11 +213,13 @@ export class ProcessMonitor {
           return;
         }
         
-        const processes: ProcessInfo[] = (list || []).map((proc: PM2ProcessDescription) => ({
-          id: proc.pm_id!,
-          name: proc.name!,
-          pm_cwd: proc.pm_cwd || ''
-        }));
+        const processes: ProcessInfo[] = (list || []).map((proc: any) => {
+          return {
+            id: proc.pm_id!,
+            name: proc.name!,
+            pm_cwd: proc.pm2_env?.pm_cwd || proc.pm_cwd || ''
+          };
+        });
         
         resolve(processes);
       });
