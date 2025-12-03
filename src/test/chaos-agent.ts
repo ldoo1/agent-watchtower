@@ -7,6 +7,7 @@ console.log('[CHAOS] Starting chaos agent...');
 console.log('[CHAOS] This agent will crash in 5 seconds...');
 
 // Simulate some sensitive logs to test redaction
+// NOTE: These are fake credentials for testing purposes
 console.log('[CHAOS] Connecting to DB with password: super_secret_password_123');
 console.log('[CHAOS] API Key: sk-proj-12345678901234567890123456789012');
 

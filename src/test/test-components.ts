@@ -16,6 +16,7 @@ async function runTests() {
 
   // 1. Test Redactor
   console.log('🔒 Testing Redactor...');
+  // Dummy secrets for testing - NOT real credentials
   const secret = 'sk-proj-12345678901234567890123456789012';
   const input = `My API key is ${secret} and my password is "secret123"`;
   const output = redactSecrets(input);
