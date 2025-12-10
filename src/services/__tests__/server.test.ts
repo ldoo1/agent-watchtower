@@ -4,6 +4,7 @@ import express from 'express';
 import { SlackServer } from '../server.js';
 import { ProcessMonitor } from '../monitor.js';
 import { metrics } from '../metrics.js';
+import { ProcessInfo } from '../../types.js';
 
 // Mock dependencies
 jest.mock('../slack.js', () => ({
@@ -20,18 +21,20 @@ describe('SlackServer', () => {
   let mockMonitor: jest.Mocked<ProcessMonitor>;
 
   beforeEach(() => {
+    const mockProcessList: ProcessInfo[] = [
+      {
+        id: 1,
+        name: 'test-agent',
+        pm_cwd: '/path',
+        status: 'online',
+        memory: 1000000,
+        cpu: 5,
+        uptime: 3600000,
+      },
+    ];
+    
     mockMonitor = {
-      getProcessList: jest.fn().mockResolvedValue([
-        {
-          id: 1,
-          name: 'test-agent',
-          pm_cwd: '/path',
-          status: 'online',
-          memory: 1000000,
-          cpu: 5,
-          uptime: 3600000,
-        },
-      ]) as any,
+      getProcessList: jest.fn<() => Promise<ProcessInfo[]>>().mockResolvedValue(mockProcessList),
     } as any;
 
     server = new SlackServer(mockMonitor, 0); // Port 0 for auto-assign
