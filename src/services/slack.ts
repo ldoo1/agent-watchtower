@@ -2,14 +2,43 @@ import axios from 'axios';
 import { ErrorContext } from '../types.js';
 import { redactSecrets } from '../utils/redactor.js';
 import { log, logError } from '../utils/logger.js';
+import { config } from '../config.js';
+import { RetryQueue } from './retry-queue.js';
+import { metrics } from './metrics.js';
 
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
+const SLACK_WEBHOOK_URL = config.slackWebhookUrl;
+const VPS_IP = config.vpsIp;
 
-if (!SLACK_WEBHOOK_URL) {
-  throw new Error('SLACK_WEBHOOK_URL environment variable is required');
+/**
+ * Directly send to Slack API (used by retry queue)
+ */
+async function sendToSlack(context: ErrorContext): Promise<void> {
+  const startTime = Date.now();
+  
+  try {
+    await axios.post(SLACK_WEBHOOK_URL, buildMessage(context), {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: config.slackTimeoutMs,
+      validateStatus: (status) => status >= 200 && status < 300
+    });
+    
+    const latency = (Date.now() - startTime) / 1000;
+    metrics.incrementCounter('watchtower_alerts_sent_total');
+    metrics.observeHistogram('watchtower_slack_latency_seconds', latency);
+    log(`Sent error alert to Slack for ${context.processName}`);
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    metrics.incrementCounter('watchtower_alerts_failed_total');
+    throw err; // Re-throw for retry queue to handle
+  }
 }
 
-export async function sendErrorAlert(context: ErrorContext): Promise<void> {
+/**
+ * Build Slack message from error context
+ */
+function buildMessage(context: ErrorContext) {
   const sanitizedContext = redactSecrets(context.logContext.join('\n'));
   const sanitizedError = redactSecrets(context.errorMessage);
   const sanitizedStack = redactSecrets(context.stackTrace);
@@ -32,7 +61,7 @@ export async function sendErrorAlert(context: ErrorContext): Promise<void> {
   
   // Build deploy command
   const agentName = context.processName;
-  const deployCommand = `ssh root@193.43.134.134 "cd /root/agents/${agentName} && git pull && npm install && npm run build && pm2 restart ${agentName}"`;
+  const deployCommand = `ssh root@${VPS_IP} "cd /root/agents/${agentName} && git pull && npm install && npm run build && pm2 restart ${agentName}"`;
   
   // Build Cursor command
   const cursorCommand = context.repo
@@ -49,7 +78,7 @@ export async function sendErrorAlert(context: ErrorContext): Promise<void> {
   const recentLogs = sanitizedContext.split('\n').slice(-10).join('\n');
   const truncatedLogs = recentLogs.length > 800 ? recentLogs.substring(0, 800) + '\n... (truncated)' : recentLogs;
   
-  const message = {
+  return {
     text: `🚨 Critical Error in \`${context.processName}\``,
     blocks: [
       {
@@ -119,18 +148,28 @@ export async function sendErrorAlert(context: ErrorContext): Promise<void> {
       }
     ]
   };
-  
+}
+
+// Create retry queue instance (after sendToSlack is defined)
+const retryQueue = new RetryQueue(sendToSlack);
+
+/**
+ * Public API: Send error alert (with retry queue integration)
+ */
+export async function sendErrorAlert(context: ErrorContext): Promise<void> {
   try {
-    await axios.post(SLACK_WEBHOOK_URL as string, message, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    log(`Sent error alert to Slack for ${context.processName}`);
+    await sendToSlack(context);
   } catch (error) {
-    logError(error, 'Failed to send Slack alert');
-    throw error;
+    // Queue for retry instead of losing the alert
+    const err = error instanceof Error ? error : new Error(String(error));
+    retryQueue.queueAlert(context, err);
+    logError(err, `Failed to send Slack alert for ${context.processName} - queued for retry`);
   }
 }
 
+/**
+ * Get retry queue instance (for monitoring/debugging)
+ */
+export function getRetryQueue(): RetryQueue {
+  return retryQueue;
+}

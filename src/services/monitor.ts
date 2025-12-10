@@ -3,6 +3,8 @@ import { ProcessInfo, ErrorContext } from '../types.js';
 import { discoverRepo } from '../utils/discovery.js';
 import { sendErrorAlert } from './slack.js';
 import { log, logError } from '../utils/logger.js';
+import { metrics } from './metrics.js';
+import { config } from '../config.js';
 
 // PM2 type definitions
 interface PM2LogData {
@@ -22,12 +24,17 @@ interface PM2ProcessDescription {
 // Ring buffer for each process: stores last N lines of stdout
 const logBuffers = new Map<number, string[]>();
 const errorHashes = new Map<string, number>(); // Track recent errors to debounce
+const processListCache = new Map<number, { data: ProcessInfo[]; timestamp: number }>();
+const processingErrors = new Set<string>(); // Track errors being processed to avoid race conditions
 
-const BUFFER_SIZE = parseInt(process.env.BUFFER_SIZE || '50', 10);
-const DEBOUNCE_MS = parseInt(process.env.DEBOUNCE_MS || '300000', 10); // 5 minutes
+const BUFFER_SIZE = config.bufferSize;
+const DEBOUNCE_MS = config.debounceMs;
+const PROCESS_LIST_CACHE_MS = config.processListCacheMs;
+const HASH_CLEANUP_INTERVAL = 60 * 1000; // Clean up old hashes every minute
 
 export class ProcessMonitor {
   private isRunning = false;
+  private hashCleanupInterval?: NodeJS.Timeout;
   
   async start(): Promise<void> {
     if (this.isRunning) {
@@ -72,9 +79,36 @@ export class ProcessMonitor {
       bus.on('process:event', (data: any) => {
         if (data.event === 'restart' || data.event === 'exit') {
           const name = data.process?.name || data.name || 'unknown';
+          const processId = data.process?.pm_id || data.pm_id;
           log(`Process ${name} ${data.event}ed`);
+          
+          // Clean up log buffer and cache when process exits permanently
+          if (data.event === 'exit' && processId !== undefined) {
+            // Only clean up if it's not restarting (give it a moment)
+            setTimeout(async () => {
+              try {
+                // Check if process still doesn't exist
+                const processList = await this.getProcessList();
+                const stillExists = processList.some(p => p.id === processId);
+                
+                if (!stillExists) {
+                  logBuffers.delete(processId);
+                  // Clear cache to force refresh
+                  processListCache.clear();
+                  log(`Cleaned up buffers for exited process ${processId}`);
+                }
+              } catch (err) {
+                // If we can't check, assume it's gone and clean up anyway
+                logBuffers.delete(processId);
+                processListCache.clear();
+              }
+            }, 10000); // Wait 10 seconds to see if it restarts
+          }
         }
       });
+      
+      // Start periodic cleanup
+      this.startPeriodicCleanup();
       
       log('Event listeners set up');
     });
@@ -125,9 +159,9 @@ export class ProcessMonitor {
     const errorMessage = data.data?.trim();
     if (!errorMessage) return;
     
-    // Get process info
+    // Get process info (with caching)
     try {
-      const processList = await this.getProcessList();
+      const processList = await this.getCachedProcessList();
       const processInfo = processList.find(p => p.id === processId);
       
       if (!processInfo) {
@@ -145,14 +179,19 @@ export class ProcessMonitor {
         return;
       }
       
+      // Race condition prevention: Check if this error is already being processed
+      const processingKey = `${processId}:${errorHash}`;
+      if (processingErrors.has(processingKey)) {
+        log(`Error already being processed for ${processInfo.name}`, 'warn');
+        return;
+      }
+      
+      processingErrors.add(processingKey);
       errorHashes.set(errorHash, now);
       
-      // Clean up old hashes (older than debounce window)
-      for (const [hash, timestamp] of errorHashes.entries()) {
-        if (now - timestamp > DEBOUNCE_MS) {
-          errorHashes.delete(hash);
-        }
-      }
+      try {
+      // Record error metric
+      metrics.incrementCounter('watchtower_errors_total', { agent: processInfo.name });
       
       // Get log context
       const logContext = logBuffers.get(processId) || [];
@@ -172,8 +211,16 @@ export class ProcessMonitor {
         timestamp: new Date()
       };
       
-      // Send to Slack
-      await sendErrorAlert(errorContext);
+      // Send to Slack (fire and forget, with error handling)
+      sendErrorAlert(errorContext).catch((err) => {
+        logError(err, `Failed to send Slack alert for ${processInfo.name}`);
+      });
+      } finally {
+        // Remove from processing set after a delay to prevent immediate duplicates
+        setTimeout(() => {
+          processingErrors.delete(processingKey);
+        }, 1000);
+      }
       
     } catch (error) {
       logError(error, `Failed to handle error for process ${processId}`);
@@ -205,6 +252,23 @@ export class ProcessMonitor {
     return Buffer.from(normalized).toString('base64').substring(0, 50);
   }
   
+  private async getCachedProcessList(): Promise<ProcessInfo[]> {
+    const now = Date.now();
+    const cacheKey = 0; // Single cache for all processes
+    
+    const cached = processListCache.get(cacheKey);
+    if (cached && (now - cached.timestamp) < PROCESS_LIST_CACHE_MS) {
+      metrics.incrementCounter('watchtower_process_list_cache_hits_total');
+      return cached.data;
+    }
+    
+    // Cache miss, fetch fresh data
+    metrics.incrementCounter('watchtower_process_list_cache_misses_total');
+    const processes = await this.getProcessList();
+    processListCache.set(cacheKey, { data: processes, timestamp: now });
+    return processes;
+  }
+  
   public async getProcessList(): Promise<ProcessInfo[]> {
     return new Promise((resolve, reject) => {
       pm2.list((err, list) => {
@@ -230,8 +294,35 @@ export class ProcessMonitor {
     });
   }
   
+  private startPeriodicCleanup(): void {
+    this.hashCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      let cleaned = 0;
+      
+      for (const [hash, timestamp] of errorHashes.entries()) {
+        if (now - timestamp > DEBOUNCE_MS) {
+          errorHashes.delete(hash);
+          cleaned++;
+        }
+      }
+      
+      if (cleaned > 0) {
+        log(`Cleaned up ${cleaned} old error hashes`);
+      }
+    }, HASH_CLEANUP_INTERVAL);
+    
+    // Allow process to exit even if interval is running (for tests)
+    if (this.hashCleanupInterval && typeof this.hashCleanupInterval.unref === 'function') {
+      this.hashCleanupInterval.unref();
+    }
+  }
+  
   async stop(): Promise<void> {
     if (!this.isRunning) return;
+    
+    if (this.hashCleanupInterval) {
+      clearInterval(this.hashCleanupInterval);
+    }
     
     pm2.disconnect();
     this.isRunning = false;

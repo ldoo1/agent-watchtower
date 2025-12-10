@@ -2,9 +2,10 @@ import 'dotenv/config';
 import { ProcessMonitor } from './services/monitor.js';
 import { SlackServer } from './services/server.js';
 import { log, logError } from './utils/logger.js';
+import { config } from './config.js';
 
 const monitor = new ProcessMonitor();
-const slackServer = new SlackServer(monitor, parseInt(process.env.PORT || '3333', 10));
+const slackServer = new SlackServer(monitor, config.port);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
