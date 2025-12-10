@@ -9,7 +9,7 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 describe('Slack Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (mockedAxios.post as jest.Mock).mockResolvedValue({ status: 200, data: 'ok' });
+    (mockedAxios.post as jest.Mock).mockResolvedValue({ status: 200, data: 'ok' } as any);
   });
 
   it('should send error alert successfully', async () => {
@@ -34,7 +34,7 @@ describe('Slack Service', () => {
   });
 
   it('should queue alert for retry on failure', async () => {
-    (mockedAxios.post as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
+    (mockedAxios.post as jest.Mock).mockRejectedValueOnce(new Error('Network error') as any);
 
     const context: ErrorContext = {
       processId: 1,

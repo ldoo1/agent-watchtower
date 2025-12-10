@@ -31,7 +31,7 @@ describe('SlackServer', () => {
           cpu: 5,
           uptime: 3600000,
         },
-      ]),
+      ]) as any,
     } as any;
 
     server = new SlackServer(mockMonitor, 0); // Port 0 for auto-assign
