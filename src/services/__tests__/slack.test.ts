@@ -4,14 +4,12 @@ import { ErrorContext } from '../../types.js';
 import axios from 'axios';
 
 jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('Slack Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    const mockPost = jest.fn<typeof axios.post>();
-    (mockPost as any).mockResolvedValue({ status: 200, data: 'ok' });
-    (mockedAxios.post as any) = mockPost;
+    const mockPost = jest.fn().mockResolvedValue({ status: 200, data: 'ok' });
+    (axios.post as any) = mockPost;
   });
 
   it('should send error alert successfully', async () => {
@@ -28,15 +26,16 @@ describe('Slack Service', () => {
 
     await sendErrorAlert(context);
 
-    expect(mockedAxios.post).toHaveBeenCalled();
-    const call = (mockedAxios.post as jest.Mock).mock.calls[0];
+    expect(axios.post).toHaveBeenCalled();
+    const call = (axios.post as jest.Mock).mock.calls[0];
     expect(call[1]).toMatchObject({
       text: expect.stringContaining('test-agent'),
     });
   });
 
   it('should queue alert for retry on failure', async () => {
-    (mockedAxios.post as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
+    const mockPost = jest.fn().mockRejectedValue(new Error('Network error'));
+    (axios.post as any) = mockPost;
 
     const context: ErrorContext = {
       processId: 1,
@@ -50,7 +49,7 @@ describe('Slack Service', () => {
     await sendErrorAlert(context);
 
     // Should have attempted to send
-    expect(mockedAxios.post).toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalled();
     
     // Should be queued for retry
     const retryQueue = getRetryQueue();
@@ -61,6 +60,9 @@ describe('Slack Service', () => {
   });
 
   it('should include repo and branch in message', async () => {
+    const mockPost = jest.fn().mockResolvedValue({ status: 200, data: 'ok' });
+    (axios.post as any) = mockPost;
+
     const context: ErrorContext = {
       processId: 1,
       processName: 'test-agent',
@@ -74,7 +76,7 @@ describe('Slack Service', () => {
 
     await sendErrorAlert(context);
 
-    const call = (mockedAxios.post as jest.Mock).mock.calls[0];
+    const call = (axios.post as jest.Mock).mock.calls[0];
     const message = call[1] as any;
     const blocks = message.blocks;
     
